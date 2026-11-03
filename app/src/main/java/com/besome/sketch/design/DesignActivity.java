@@ -127,6 +127,7 @@ import pro.sketchware.databinding.DesignBinding;
 import pro.sketchware.databinding.FileSelectorPopupSelectJavaBinding;
 import pro.sketchware.dialogs.BuildSettingsBottomSheet;
 import pro.sketchware.utility.FileUtil;
+import pro.sketchware.utility.NativeCompiler;
 import pro.sketchware.utility.SketchwareUtil;
 import pro.sketchware.utility.ThemeUtils;
 import pro.sketchware.utility.apk.ApkSignatures;
@@ -1203,6 +1204,19 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                     return;
                 }
 
+                onProgress("C++ is compiling...", 14);
+                try {
+                    NativeCompiler.compile(activity.getApplicationContext(), sc_id, builder.fpu.getPathNativelibs(sc_id));
+                } catch (NativeCompiler.NativeCompileException e) {
+                    activity.runOnUiThread(() -> AnalyticsHelper.logExportProject(activity, "debug_apk", activity.sc_id, false));
+                    isBuildFinished = true;
+                    activity.indicateCompileErrorOccurred(e.getMessage());
+                    return;
+                }
+                if (canceled) {
+                    return;
+                }
+
                 StringfogHandler stringfogHandler = new StringfogHandler(sc_id);
                 stringfogHandler.start(this, builder);
                 if (canceled) {
@@ -1592,6 +1606,11 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                 return new ViewEditorFragment();
             } else {
                 return position == 1 ? new rs() : new br();
+            }
+        }
+    }
+}
+;
             }
         }
     }
