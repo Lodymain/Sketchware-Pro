@@ -13,6 +13,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Environment;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
@@ -68,13 +69,21 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics;
 import pro.sketchware.utility.AnalyticsHelper;
 import com.topjohnwu.superuser.Shell;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 import a.a.a.DB;
 import a.a.a.GB;
@@ -127,7 +136,6 @@ import pro.sketchware.databinding.DesignBinding;
 import pro.sketchware.databinding.FileSelectorPopupSelectJavaBinding;
 import pro.sketchware.dialogs.BuildSettingsBottomSheet;
 import pro.sketchware.utility.FileUtil;
-import pro.sketchware.utility.NativeCompiler;
 import pro.sketchware.utility.SketchwareUtil;
 import pro.sketchware.utility.ThemeUtils;
 import pro.sketchware.utility.apk.ApkSignatures;
@@ -1608,5 +1616,113 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
                 return position == 1 ? new rs() : new br();
             }
         }
+    }
+
+    public static class NativeCompiler {
+
+    public static class NativeCompileException extends Exception {
+        public NativeCompileException(String message) {
+            super(message);
+        }
+    }
+
+    public static void compile(Context context, String scId, String nativeLibsPath)
+            throws NativeCompileException, IOException, InterruptedException {
+        File srcDir = new File(Environment.getExternalStorageDirectory(),
+                ".sketchware/data/" + scId + "/files/native_src");
+        File[] cpps = srcDir.listFiles((d, n) -> n.endsWith(".cpp"));
+        if (cpps == null || cpps.length == 0) {
+            return; // not a C++ project, nothing to do
+        }
+
+        File toolchain = new File(context.getFilesDir(), "toolchain");
+        File clang = new File(toolchain, "bin/clang++");
+        if (!clang.exists()) {
+            File zip = new File(Environment.getExternalStorageDirectory(), ".sketchware/toolchain.zip");
+            if (!zip.exists()) {
+                throw new NativeCompileException("Toolchain C++ nao instalado.\n"
+                        + "Coloque o arquivo toolchain.zip em:\n" + zip.getAbsolutePath());
+            }
+            extractZip(zip, toolchain);
+        }
+        if (!clang.exists()) {
+            throw new NativeCompileException("O toolchain.zip nao tem bin/clang++ na raiz.");
+        }
+        makeExecutable(new File(toolchain, "bin"));
+
+        File outDir = new File(nativeLibsPath, "arm64-v8a");
+        outDir.mkdirs();
+        File so = new File(outDir, "libmain.so");
+        so.delete();
+
+        List<String> cmd = new ArrayList<>(Arrays.asList(
+                clang.getAbsolutePath(),
+                "--sysroot=" + new File(toolchain, "sysroot").getAbsolutePath(),
+                "-target", "aarch64-linux-android26",
+                "-shared", "-fPIC", "-Os", "-static-libstdc++",
+                "-o", so.getAbsolutePath()));
+        for (File f : cpps) {
+            cmd.add(f.getAbsolutePath());
+        }
+        cmd.add("-llog");
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.environment().put("LD_LIBRARY_PATH", new File(toolchain, "lib").getAbsolutePath());
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (InputStream in = process.getInputStream()) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                output.write(buf, 0, n);
+            }
+        }
+        int exit = process.waitFor();
+        if (exit != 0 || !so.exists()) {
+            throw new NativeCompileException("Erro do clang++ (codigo " + exit + "):\n" + output);
+        }
+    }
+
+    private static void extractZip(File zip, File targetDir) throws IOException {
+        targetDir.mkdirs();
+        String root = targetDir.getCanonicalPath() + File.separator;
+        try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zip))) {
+            ZipEntry entry;
+            byte[] buf = new byte[8192];
+            while ((entry = zis.getNextEntry()) != null) {
+                File out = new File(targetDir, entry.getName());
+                if (!out.getCanonicalPath().startsWith(root)) {
+                    throw new IOException("Entrada invalida no zip: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    out.mkdirs();
+                    continue;
+                }
+                File parent = out.getParentFile();
+                if (parent != null) parent.mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(out)) {
+                    int n;
+                    while ((n = zis.read(buf)) != -1) {
+                        fos.write(buf, 0, n);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void makeExecutable(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.isDirectory()) {
+                makeExecutable(f);
+            } else {
+                f.setExecutable(true, false);
+                f.setReadable(true, false);
+            }
+        }
+    }
     }
 }
