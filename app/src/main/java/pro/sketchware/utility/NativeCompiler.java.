@@ -14,15 +14,6 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-/**
- * Compiles C++ sources of a project into libmain.so with a clang toolchain
- * stored inside the app's private files dir (no Termux needed).
- *
- * C++ sources:  /storage/emulated/0/.sketchware/data/PROJECT_ID/files/native_src/*.cpp
- * Toolchain:    filesDir/toolchain/{bin,lib,sysroot}
- * Install it by putting toolchain.zip in /storage/emulated/0/.sketchware/toolchain.zip
- * (the zip must contain bin/, lib/ and sysroot/ at its root). It is extracted on first use.
- */
 public class NativeCompiler {
 
     public static class NativeCompileException extends Exception {
@@ -37,7 +28,7 @@ public class NativeCompiler {
                 ".sketchware/data/" + scId + "/files/native_src");
         File[] cpps = srcDir.listFiles((d, n) -> n.endsWith(".cpp"));
         if (cpps == null || cpps.length == 0) {
-            return; // not a C++ project, nothing to do
+            return;
         }
 
         File toolchain = new File(context.getFilesDir(), "toolchain");
