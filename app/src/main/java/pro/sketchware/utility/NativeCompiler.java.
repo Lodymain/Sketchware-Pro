@@ -1,0 +1,132 @@
+package pro.sketchware.utility;
+
+import android.content.Context;
+import android.os.Environment;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+/**
+ * Compiles C++ sources of a project into libmain.so with a clang toolchain
+ * stored inside the app's private files dir (no Termux needed).
+ *
+ * C++ sources:  /storage/emulated/0/.sketchware/data/PROJECT_ID/files/native_src/*.cpp
+ * Toolchain:    filesDir/toolchain/{bin,lib,sysroot}
+ * Install it by putting toolchain.zip in /storage/emulated/0/.sketchware/toolchain.zip
+ * (the zip must contain bin/, lib/ and sysroot/ at its root). It is extracted on first use.
+ */
+public class NativeCompiler {
+
+    public static class NativeCompileException extends Exception {
+        public NativeCompileException(String message) {
+            super(message);
+        }
+    }
+
+    public static void compile(Context context, String scId, String nativeLibsPath)
+            throws NativeCompileException, IOException, InterruptedException {
+        File srcDir = new File(Environment.getExternalStorageDirectory(),
+                ".sketchware/data/" + scId + "/files/native_src");
+        File[] cpps = srcDir.listFiles((d, n) -> n.endsWith(".cpp"));
+        if (cpps == null || cpps.length == 0) {
+            return; // not a C++ project, nothing to do
+        }
+
+        File toolchain = new File(context.getFilesDir(), "toolchain");
+        File clang = new File(toolchain, "bin/clang++");
+        if (!clang.exists()) {
+            File zip = new File(Environment.getExternalStorageDirectory(), ".sketchware/toolchain.zip");
+            if (!zip.exists()) {
+                throw new NativeCompileException("Toolchain C++ nao instalado.\n"
+                        + "Coloque o arquivo toolchain.zip em:\n" + zip.getAbsolutePath());
+            }
+            extractZip(zip, toolchain);
+        }
+        if (!clang.exists()) {
+            throw new NativeCompileException("O toolchain.zip nao tem bin/clang++ na raiz.");
+        }
+        makeExecutable(new File(toolchain, "bin"));
+
+        File outDir = new File(nativeLibsPath, "arm64-v8a");
+        outDir.mkdirs();
+        File so = new File(outDir, "libmain.so");
+        so.delete();
+
+        List<String> cmd = new ArrayList<>(Arrays.asList(
+                clang.getAbsolutePath(),
+                "--sysroot=" + new File(toolchain, "sysroot").getAbsolutePath(),
+                "-target", "aarch64-linux-android26",
+                "-shared", "-fPIC", "-Os", "-static-libstdc++",
+                "-o", so.getAbsolutePath()));
+        for (File f : cpps) {
+            cmd.add(f.getAbsolutePath());
+        }
+        cmd.add("-llog");
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.environment().put("LD_LIBRARY_PATH", new File(toolchain, "lib").getAbsolutePath());
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (InputStream in = process.getInputStream()) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                output.write(buf, 0, n);
+            }
+        }
+        int exit = process.waitFor();
+        if (exit != 0 || !so.exists()) {
+            throw new NativeCompileException("Erro do clang++ (codigo " + exit + "):\n" + output);
+        }
+    }
+
+    private static void extractZip(File zip, File targetDir) throws IOException {
+        targetDir.mkdirs();
+        String root = targetDir.getCanonicalPath() + File.separator;
+        try (ZipInputStream zis = new ZipInputStream(new java.io.FileInputStream(zip))) {
+            ZipEntry entry;
+            byte[] buf = new byte[8192];
+            while ((entry = zis.getNextEntry()) != null) {
+                File out = new File(targetDir, entry.getName());
+                if (!out.getCanonicalPath().startsWith(root)) {
+                    throw new IOException("Entrada invalida no zip: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    out.mkdirs();
+                    continue;
+                }
+                File parent = out.getParentFile();
+                if (parent != null) parent.mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(out)) {
+                    int n;
+                    while ((n = zis.read(buf)) != -1) {
+                        fos.write(buf, 0, n);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void makeExecutable(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.isDirectory()) {
+                makeExecutable(f);
+            } else {
+                f.setExecutable(true, false);
+                f.setReadable(true, false);
+            }
+        }
+    }
+}
