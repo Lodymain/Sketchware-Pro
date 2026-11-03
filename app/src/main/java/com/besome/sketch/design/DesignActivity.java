@@ -1610,8 +1610,3 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         }
     }
 }
-;
-            }
-        }
-    }
-}
