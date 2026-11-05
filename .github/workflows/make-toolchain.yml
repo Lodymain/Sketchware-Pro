@@ -1,0 +1,43 @@
+name: Make C++ toolchain
+on: workflow_dispatch
+
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download official NDK (sysroot + clang headers)
+        run: |
+          set -e
+          curl -L -o official.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          unzip -q official.zip -d official
+
+      - name: Download ARM64 clang (lzhiyong)
+        run: |
+          set -e
+          curl -L -o arm.tar.xz https://github.com/lzhiyong/termux-ndk/releases/download/android-ndk/android-ndk-r29-aarch64.tar.xz
+          mkdir arm && tar -xJf arm.tar.xz -C arm
+
+      - name: Assemble slim toolchain
+        run: |
+          set -e
+          OFF=$(ls -d official/android-ndk-*/toolchains/llvm/prebuilt/linux-x86_64)
+          ARM=$(ls -d arm/*/toolchains/llvm/prebuilt/linux-x86_64 2>/dev/null || ls -d arm/toolchains/llvm/prebuilt/linux-x86_64)
+          mkdir -p slim/bin slim/lib
+          cp -L "$ARM/bin/clang-21" slim/bin/clang-21
+          cp -L "$ARM/bin/lld" slim/bin/ld.lld
+          cp -r "$OFF/lib/clang" slim/lib/clang
+          find slim/lib/clang -type f -path '*/lib/linux/*' ! -name '*aarch64*' -delete
+          cp -r "$OFF/sysroot" slim/sysroot
+          cd slim/sysroot/usr/lib
+          for d in *; do [ "$d" != "aarch64-linux-android" ] && rm -rf "$d"; done
+          cd aarch64-linux-android
+          for d in */; do n=${d%/}; case "$n" in 26) ;; *[0-9]) rm -rf "$n" ;; esac; done
+          cd ../../../../..
+          du -sh slim
+          find slim -maxdepth 3 | head -60
+          cd slim && zip -qr ../toolchain.zip bin lib sysroot
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolchain
+          path: toolchain.zip
