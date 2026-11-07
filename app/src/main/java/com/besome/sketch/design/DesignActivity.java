@@ -1641,13 +1641,18 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
 
         File toolchain = new File(context.getFilesDir(), "toolchain");
         File clang = new File(toolchain, "bin/clang-21");
-        if (!clang.exists()) {
-            File zip = new File(Environment.getExternalStorageDirectory(), ".sketchware/toolchain.zip");
+        File zip = new File(Environment.getExternalStorageDirectory(), ".sketchware/toolchain.zip");
+        File stamp = new File(toolchain, ".zipstamp");
+        String zipId = zip.exists() ? zip.length() + ":" + zip.lastModified() : "";
+        boolean needsExtract = !clang.exists() || (zip.exists() && !zipId.equals(readStamp(stamp)));
+        if (needsExtract) {
             if (!zip.exists()) {
                 throw new NativeCompileException("Toolchain C++ nao instalado.\n"
                         + "Coloque o arquivo toolchain.zip em:\n" + zip.getAbsolutePath());
             }
+            deleteRecursive(toolchain);
             extractZip(zip, toolchain);
+            writeStamp(stamp, zipId);
         }
         if (!clang.exists()) {
             throw new NativeCompileException("O toolchain.zip nao tem bin/clang-21 na raiz.");
@@ -1691,6 +1696,32 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         if (exit != 0 || !so.exists()) {
             throw new NativeCompileException("Erro do clang++ (codigo " + exit + "):\n" + output);
         }
+    }
+
+    private static String readStamp(File f) {
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f))) {
+            String line = r.readLine();
+            return line == null ? "" : line;
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private static void writeStamp(File f, String value) {
+        try (java.io.FileWriter w = new java.io.FileWriter(f)) {
+            w.write(value);
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void deleteRecursive(File f) {
+        File[] children = f.listFiles();
+        if (children != null) {
+            for (File c : children) {
+                deleteRecursive(c);
+            }
+        }
+        f.delete();
     }
 
     private static void collectSources(File dir, List<File> out) {
