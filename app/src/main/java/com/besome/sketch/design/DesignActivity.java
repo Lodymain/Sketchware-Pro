@@ -1628,15 +1628,19 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
 
     public static void compile(Context context, String scId, String nativeLibsPath)
             throws NativeCompileException, IOException, InterruptedException {
-        File srcDir = new File(Environment.getExternalStorageDirectory(),
-                ".sketchware/data/" + scId + "/files/native_src");
-        File[] cpps = srcDir.listFiles((d, n) -> n.endsWith(".cpp"));
-        if (cpps == null || cpps.length == 0) {
+        File filesDir = new File(Environment.getExternalStorageDirectory(),
+                ".sketchware/data/" + scId + "/files");
+        File srcDir = new File(filesDir, "native_src");
+        File assetsDir = new File(filesDir, "assets");
+        List<File> cpps = new ArrayList<>();
+        collectSources(srcDir, cpps);
+        collectSources(assetsDir, cpps);
+        if (cpps.isEmpty()) {
             return; // not a C++ project, nothing to do
         }
 
         File toolchain = new File(context.getFilesDir(), "toolchain");
-        File clang = new File(toolchain, "bin/clang++");
+        File clang = new File(toolchain, "bin/clang-21");
         if (!clang.exists()) {
             File zip = new File(Environment.getExternalStorageDirectory(), ".sketchware/toolchain.zip");
             if (!zip.exists()) {
@@ -1646,7 +1650,7 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
             extractZip(zip, toolchain);
         }
         if (!clang.exists()) {
-            throw new NativeCompileException("O toolchain.zip nao tem bin/clang++ na raiz.");
+            throw new NativeCompileException("O toolchain.zip nao tem bin/clang-21 na raiz.");
         }
         makeExecutable(new File(toolchain, "bin"));
 
@@ -1657,9 +1661,13 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
 
         List<String> cmd = new ArrayList<>(Arrays.asList(
                 clang.getAbsolutePath(),
+                "--driver-mode=g++",
+                "-fuse-ld=lld",
                 "--sysroot=" + new File(toolchain, "sysroot").getAbsolutePath(),
                 "-target", "aarch64-linux-android26",
                 "-shared", "-fPIC", "-Os", "-static-libstdc++",
+                "-I" + srcDir.getAbsolutePath(),
+                "-I" + assetsDir.getAbsolutePath(),
                 "-o", so.getAbsolutePath()));
         for (File f : cpps) {
             cmd.add(f.getAbsolutePath());
@@ -1682,6 +1690,21 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         int exit = process.waitFor();
         if (exit != 0 || !so.exists()) {
             throw new NativeCompileException("Erro do clang++ (codigo " + exit + "):\n" + output);
+        }
+    }
+
+    private static void collectSources(File dir, List<File> out) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.isDirectory()) {
+                collectSources(f, out);
+            } else {
+                String n = f.getName();
+                if (n.endsWith(".cpp") || n.endsWith(".cc") || n.endsWith(".cxx")) {
+                    out.add(f);
+                }
+            }
         }
     }
 
