@@ -26,7 +26,8 @@ jobs:
           cp -L "$ARM/bin/clang-21" slim/bin/clang-21
           cp -L "$ARM/bin/lld" slim/bin/ld.lld
           cp -r "$OFF/lib/clang" slim/lib/clang
-          find slim/lib/clang -type f -path '*/lib/linux/*' ! -name '*aarch64*' -delete
+          find slim/lib/clang/*/lib/linux -mindepth 1 -maxdepth 1 -type d ! -name aarch64 -exec rm -rf {} +
+          find slim/lib/clang/*/lib/linux -maxdepth 1 -type f ! -name '*aarch64*' -delete
           cp -r "$OFF/sysroot" slim/sysroot
           cd slim/sysroot/usr/lib
           for d in *; do [ "$d" != "aarch64-linux-android" ] && rm -rf "$d"; done
@@ -35,9 +36,34 @@ jobs:
           cd ../../../../..
           du -sh slim
           find slim -maxdepth 3 | head -60
-          cd slim && zip -qr ../toolchain.zip bin lib sysroot
+
+      - name: Check required files
+        run: |
+          set -e
+          cd slim
+          test -n "$(find . -name libunwind.a)" || { echo "FALTA libunwind.a"; exit 1; }
+          test -n "$(find . -name 'libclang_rt.builtins-aarch64-android.a')" || { echo "FALTA builtins"; exit 1; }
+          test -n "$(find . -name libc++_static.a)" || { echo "FALTA libc++_static.a"; exit 1; }
+          test -n "$(find . -name libc.so)" || { echo "FALTA libc.so"; exit 1; }
+          test -f bin/clang-21 || { echo "FALTA clang-21"; exit 1; }
+          test -f bin/ld.lld || { echo "FALTA ld.lld"; exit 1; }
+          echo "Tudo certo"
+
+      - name: Compress (maximum)
+        run: |
+          set -e
+          cp -rL slim slim_flat
+          cd slim_flat
+          sudo apt-get install -y -qq p7zip-full >/dev/null 2>&1 || true
+          if command -v 7z >/dev/null 2>&1; then
+            7z a -tzip -mx=9 -mfb=258 -mpass=15 ../toolchain.zip bin lib sysroot >/dev/null
+          else
+            zip -9 -qr ../toolchain.zip bin lib sysroot
+          fi
+          ls -lh ../toolchain.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: toolchain
           path: toolchain.zip
+          compression-level: 0
